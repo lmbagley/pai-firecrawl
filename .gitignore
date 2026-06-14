@@ -1,0 +1,14 @@
+# dependencies (bun.lock IS committed for reproducible installs)
+node_modules/
+
+# secrets — never commit a key
+*.key
+api-key
+.env
+.env.*
+*.token
+
+# build / os
+dist/
+*.log
+.DS_Store

@@ -1,0 +1,31 @@
+{
+  "name": "pai-firecrawl",
+  "version": "0.1.0",
+  "description": "A small, dependency-free bun CLI for the Firecrawl v2 API — scrape, crawl, map, search, and extract the web to clean markdown.",
+  "type": "module",
+  "bin": {
+    "firecrawl": "./cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "firecrawl": "bun cli.ts"
+  },
+  "keywords": [
+    "firecrawl",
+    "scraper",
+    "crawler",
+    "web-scraping",
+    "markdown",
+    "cli",
+    "bun"
+  ],
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}
