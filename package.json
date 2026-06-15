@@ -21,6 +21,15 @@
     "bun"
   ],
   "license": "MIT",
+  "author": "Mark Bagley",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lmbagley/pai-firecrawl.git"
+  },
+  "homepage": "https://github.com/lmbagley/pai-firecrawl#readme",
+  "bugs": {
+    "url": "https://github.com/lmbagley/pai-firecrawl/issues"
+  },
   "engines": {
     "bun": ">=1.0.0"
   },

@@ -1,5 +1,10 @@
 # pai-firecrawl
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=black)](https://bun.sh)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+
 A small, dependency-free [Bun](https://bun.sh) CLI for the [Firecrawl](https://firecrawl.dev) v2 API. Scrape, crawl, map, search, and extract the live web to clean Markdown — from your terminal or any agent.
 
 - **Markdown by default**, `--json` for raw API output.
@@ -15,7 +20,7 @@ Firecrawl handles JS rendering and anti-bot *inside a single API call*, and ship
 ## Install
 
 ```bash
-git clone https://github.com/<you>/pai-firecrawl.git
+git clone https://github.com/lmbagley/pai-firecrawl.git
 cd pai-firecrawl
 bun install            # dev types only; there are no runtime deps
 
@@ -84,6 +89,16 @@ bun run typecheck   # tsc --noEmit
 ```
 
 The single network chokepoint is `FirecrawlClient.request()`; it surfaces both HTTP errors and Firecrawl's `{success:false}` 200-envelopes inline. Response shapes in `src/types.ts` were captured from live v2 responses.
+
+## Contributing
+
+Issues and PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). Keep it small,
+dependency-free, and tested.
+
+## Security
+
+Key handling and vulnerability reporting are documented in [SECURITY.md](./SECURITY.md).
+Never put your API key in a public issue.
 
 ## License
 
