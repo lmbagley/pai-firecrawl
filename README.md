@@ -1,5 +1,6 @@
 # pai-firecrawl
 
+[![CI](https://github.com/lmbagley/pai-firecrawl/actions/workflows/ci.yml/badge.svg)](https://github.com/lmbagley/pai-firecrawl/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=black)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
