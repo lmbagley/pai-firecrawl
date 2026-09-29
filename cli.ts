@@ -18,8 +18,11 @@ import {
   formatPages,
   formatUsage,
   creditFooter,
+  formatFindTools,
+  formatAlexandriaResult,
 } from "./src/format.ts";
-import type { JobStatusResponse } from "./src/types.ts";
+import { findExactContract, planSpend, overageWarnings } from "./src/alexandria.ts";
+import type { JobStatusResponse, AlexandriaCall } from "./src/types.ts";
 
 const BOOLEAN_FLAGS = new Set(["json", "only-main", "poll", "scrape"]);
 
@@ -123,6 +126,18 @@ COMMANDS
   status <id>            Check an async job (--type crawl|batch)
   cancel <id>            Cancel an async job (--type crawl|batch)
   usage                   Show remaining free-tier credits
+  find-tools [query]      Browse the Alexandria data-provider catalogue or read a contract (free)
+
+ALEXANDRIA (catalogued data providers — discover, inspect, then execute)
+  search <query> --sources alexandria     Find ranked tools for a task (free)
+  find-tools --providers <p> --capabilities <c>
+                                           Read one tool's price, inputs, and response (free)
+  scrape --provider <p> --capability <c> --options '<json>' --max-credits <n>
+                                           Run it. Looks the contract up first and refuses
+                                           when the catalogue does not return that exact
+                                           tool, a required input is missing, or the
+                                           worst-case cost is over --max-credits. Paid
+                                           calls require --max-credits.
 
 COMMON FLAGS
   --json                  Print the raw API JSON instead of markdown
@@ -134,13 +149,23 @@ COMMON FLAGS
   --search <term>         map: filter discovered URLs
   --limit <n>             cap results (map/search/crawl)
   --scrape                search: also fetch full content of each result
-  --sources <a,b>         search: web,news,images (default web)
+  --sources <a,b>         search: web,news,images,alexandria (default web)
   --max-depth <n>         crawl: max discovery depth
   --include <a,b>         crawl: only these path globs
   --exclude <a,b>         crawl: skip these path globs
   --poll                  crawl/batch/extract: wait for completion
   --timeout <s>           poll timeout in seconds (default 300)
   --type <kind>           status/cancel: crawl|batch
+  --providers/--categories/--capabilities/--urls/--groups <a,b>
+                          find-tools: narrow the catalogue
+  --level <l>             find-tools: categories|providers|groups|tools
+  --expand <a,b>          find-tools: options,response,examples
+  --offset <n>            find-tools: next page
+  --provider/--capability scrape: run an Alexandria capability instead of a URL
+  --options <json>        scrape (Alexandria): capability inputs (or --options-file <f>)
+  --max-credits <n>       scrape (Alexandria): refuse if the worst-case cost is higher
+  --assume-records <n>    scrape (Alexandria): your record bound for a per-record tool
+                          whose contract sets none (shown as your assumption)
 
 CONFIG
   Key:  FIRECRAWL_API_KEY env, else ~/.config/firecrawl/api-key (chmod 600)
@@ -154,7 +179,101 @@ EXAMPLES
   firecrawl search "best espresso machines 2026" --limit 5 --scrape
   firecrawl crawl https://docs.example.com --limit 25 --poll
   firecrawl extract https://a.com https://b.com --prompt "company name and pricing"
-  firecrawl usage`;
+  firecrawl usage
+  firecrawl search "company firmographics by domain" --sources alexandria
+  firecrawl find-tools --providers apollo --capabilities companies/enrich
+  firecrawl scrape --provider apollo --capability companies/enrich \\
+    --options '{"domain":"firecrawl.dev"}' --max-credits 30`;
+
+/** Build find-tools options from the CLI flags + positional query. */
+export function findToolsOptions(query: string, f: ParsedArgs["flags"]): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  if (query) o.query = query;
+  for (const k of ["providers", "categories", "capabilities", "urls", "groups", "expand"] as const) {
+    const v = list(f, k);
+    if (v) o[k] = v;
+  }
+  const level = str(f, "level");
+  if (level) o.level = level;
+  const limit = num(f, "limit");
+  if (limit !== undefined) o.limit = limit;
+  const offset = num(f, "offset");
+  if (offset !== undefined) o.offset = offset;
+  return o;
+}
+
+/**
+ * Run one Alexandria capability behind the spend guard. The free contract
+ * lookup always happens first; nothing is sent to the paid path unless the
+ * catalogue returned exactly this provider + capability with a readable price
+ * inside the stated cap. Guard and price lines go to stderr so --json stdout
+ * stays a clean envelope.
+ */
+export async function runAlexandriaScrape(
+  client: FirecrawlClient,
+  call: AlexandriaCall,
+  maxCredits: number | undefined,
+  asJson: boolean,
+  assumeRecords?: number,
+): Promise<string> {
+  const id = `${call.provider}/${call.capability}`;
+  const options = call.options ?? {};
+
+  let lookup;
+  try {
+    lookup = await client.findTools({
+      providers: [call.provider],
+      capabilities: [call.capability],
+      expand: ["options", "response"],
+      level: "tools",
+    });
+  } catch (e) {
+    throw new Error(
+      `contract lookup for ${id} failed, so nothing was executed: ${(e instanceof Error ? e.message : String(e)).replace(/\.+$/, "")}. ` +
+        `Discover it first: firecrawl search "<task>" --sources alexandria`,
+    );
+  }
+  if (lookup.creditsCost > 0) progress(`WARNING: the contract lookup was billed ${lookup.creditsCost} credits (expected 0)`);
+
+  const contract = findExactContract(lookup.data.items, call.provider, call.capability);
+  if (!contract) {
+    throw new Error(
+      `the Alexandria catalogue did not return ${id}, so nothing was executed. ` +
+        `Only run capabilities that discovery returned: firecrawl search "<task>" --sources alexandria`,
+    );
+  }
+
+  const plan = planSpend(contract, options, maxCredits, assumeRecords);
+  if (!plan.ok) throw new Error(`refusing to execute: ${plan.reason}`);
+  progress(`${id}: ${plan.note}${maxCredits !== undefined ? ` (cap ${maxCredits})` : ""} — executing`);
+
+  const resp = await client.alexandria([call]);
+  const item = resp.data.alexandria[0];
+  const charged = item?.creditsCost ?? resp.data.creditsCost;
+  const warnings = overageWarnings(plan, charged, maxCredits);
+  for (const w of warnings) progress(w);
+  // A charge above plan or cap still returns the data it paid for, but the run is not clean.
+  if (warnings.length) process.exitCode = 3;
+
+  if (!item) throw new Error(`${id} returned no result item${creditFooter(charged)}`);
+  if (item.error) {
+    const code = item.error.code ? ` [${item.error.code}]` : "";
+    const action = item.error.requiresAction?.url
+      ? `\n  An org admin must review and accept the provider terms at: ${item.error.requiresAction.url}`
+      : "";
+    throw new Error(`${id} failed${code}: ${item.error.message ?? "unknown error"}${action}${creditFooter(charged)}`);
+  }
+  if (item.provider !== call.provider || item.capability !== call.capability) {
+    throw new Error(`asked for ${id} but the result is for ${item.provider}/${item.capability}${creditFooter(charged)}`);
+  }
+  if (typeof item.upstreamStatus === "number" && (item.upstreamStatus < 200 || item.upstreamStatus > 299)) {
+    throw new Error(`${id} upstream returned HTTP ${item.upstreamStatus}: ${jsonOut(item.data ?? null).slice(0, 500)}${creditFooter(charged)}`);
+  }
+  if (item.data === undefined || item.data === null) {
+    throw new Error(`${id} returned no data and no error${creditFooter(charged)}`);
+  }
+  return asJson ? jsonOut(resp) : formatAlexandriaResult(item, charged as number);
+}
 
 async function pollAndCollect(
   client: FirecrawlClient,
@@ -211,6 +330,35 @@ async function run(argv: string[]): Promise<void> {
   switch (command) {
     case "scrape": {
       const url = positionals[1];
+      const provider = str(flags, "provider");
+      const capability = str(flags, "capability");
+      if (provider !== undefined || capability !== undefined || flags.provider === true || flags.capability === true) {
+        if (url) throw new Error("scrape takes either a URL or --provider/--capability (Alexandria), not both");
+        if (!provider || !capability) {
+          throw new Error("an Alexandria scrape needs both --provider <p> and --capability <c>");
+        }
+        const optJson = str(flags, "options");
+        const optFile = str(flags, "options-file");
+        if (optJson && optFile) throw new Error("use --options or --options-file, not both");
+        const opts = optFile ? readJsonFile(optFile, "--options-file") : optJson ? parseJson(optJson, "--options") : {};
+        if (!opts || typeof opts !== "object" || Array.isArray(opts)) throw new Error("--options must be a JSON object");
+        const call: AlexandriaCall = { provider, capability, options: opts as Record<string, unknown> };
+        // No --version: the catalogue only prices the latest version of a tool,
+        // so a pinned version could run at a price the guard never saw.
+        if (flags.version !== undefined) {
+          throw new Error("--version is not supported: the catalogue lists prices for the latest version only, so a pinned version cannot be priced before it runs");
+        }
+        const maxCredits = num(flags, "max-credits");
+        if (maxCredits !== undefined && !(Number.isSafeInteger(maxCredits) && maxCredits >= 0)) {
+          throw new Error(`--max-credits must be a whole number of 0 or more, got "${str(flags, "max-credits")}"`);
+        }
+        const assumeRecords = num(flags, "assume-records");
+        if (assumeRecords !== undefined && !(Number.isSafeInteger(assumeRecords) && assumeRecords >= 1)) {
+          throw new Error(`--assume-records must be a whole number of at least 1, got "${str(flags, "assume-records")}"`);
+        }
+        out(await runAlexandriaScrape(client, call, maxCredits, asJson, assumeRecords));
+        return;
+      }
       if (!url) throw new Error("scrape needs a URL: firecrawl scrape <url>");
       const prompt = str(flags, "prompt");
       const schemaFile = str(flags, "schema");
@@ -372,6 +520,14 @@ async function run(argv: string[]): Promise<void> {
       const type = str(flags, "type") ?? "crawl";
       const resp = type === "batch" ? await client.cancelBatch(id) : await client.cancelCrawl(id);
       out(asJson ? jsonOut(resp) : `cancel ${id}: ${resp.status ?? (resp.success ? "ok" : "failed")}`);
+      return;
+    }
+
+    case "find-tools": {
+      const query = positionals.slice(1).join(" ");
+      const { data, creditsCost, raw } = await client.findTools(findToolsOptions(query, flags));
+      if (creditsCost > 0) progress(`WARNING: find-tools was billed ${creditsCost} credits (expected 0)`);
+      out(asJson ? jsonOut(raw) : formatFindTools(data, creditsCost));
       return;
     }
 

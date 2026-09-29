@@ -12,6 +12,9 @@ import type {
   JobStartResponse,
   JobStatusResponse,
   CreditUsageResponse,
+  AlexandriaCall,
+  AlexandriaResponse,
+  FindToolsData,
 } from "./types.ts";
 
 const DEFAULT_BASE_URL = "https://api.firecrawl.dev/v2";
@@ -158,6 +161,53 @@ export class FirecrawlClient {
 
   search(payload: Record<string, unknown>): Promise<SearchResponse> {
     return this.request<SearchResponse>("POST", "/search", payload);
+  }
+
+  /**
+   * Execute Alexandria capabilities: POST /scrape with an `alexandria` array.
+   * Spends credits at each capability's listed price (discovery via findTools
+   * is 0). The envelope is validated here so a malformed success never reaches
+   * a renderer; per-capability errors stay in the items for the caller to
+   * surface, because the outer call can succeed while one capability fails.
+   */
+  async alexandria(calls: AlexandriaCall[]): Promise<AlexandriaResponse> {
+    if (!calls.length) throw new Error("alexandria needs at least one call");
+    const resp = await this.request<AlexandriaResponse>("POST", "/scrape", { alexandria: calls });
+    const d = resp.data;
+    if (!d || !Array.isArray(d.alexandria) || typeof d.creditsCost !== "number") {
+      throw new FirecrawlApiError(
+        200,
+        JSON.stringify(resp),
+        "Firecrawl alexandria returned an unexpected envelope (no data.alexandria / data.creditsCost)",
+      );
+    }
+    return resp;
+  }
+
+  /**
+   * Browse the Alexandria catalogue or read one contract. Free. Implemented the
+   * same way as the official SDK's findTools(): an alexandria call to the
+   * `firecrawl/find-tools` capability.
+   */
+  async findTools(
+    options: Record<string, unknown>,
+  ): Promise<{ data: FindToolsData; creditsCost: number; raw: AlexandriaResponse }> {
+    const raw = await this.alexandria([{ provider: "firecrawl", capability: "find-tools", options }]);
+    const item = raw.data.alexandria[0];
+    if (!item) throw new FirecrawlApiError(200, JSON.stringify(raw), "find-tools returned no result item");
+    if (item.error) {
+      const code = item.error.code ? ` [${item.error.code}]` : "";
+      throw new FirecrawlApiError(
+        item.error.status ?? 200,
+        JSON.stringify(raw),
+        `find-tools failed${code}: ${item.error.message ?? "unknown error"}`,
+      );
+    }
+    const data = item.data as FindToolsData | undefined;
+    if (!data || !Array.isArray(data.items)) {
+      throw new FirecrawlApiError(200, JSON.stringify(raw), "find-tools returned no items array");
+    }
+    return { data, creditsCost: raw.data.creditsCost, raw };
   }
 
   creditUsage(): Promise<CreditUsageResponse> {

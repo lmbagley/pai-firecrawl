@@ -75,8 +75,37 @@ firecrawl usage
 | `status <id>` | Check an async job (`--type crawl\|batch`) |
 | `cancel <id>` | Cancel an async job (`--type crawl\|batch`) |
 | `usage` | Remaining free-tier credits and billing window |
+| `find-tools [query]` | Browse the Alexandria data-provider catalogue, or read one tool's price, inputs and response contract (free) |
 
 Run `firecrawl help` for the full flag reference.
+
+### Alexandria (catalogued data providers)
+
+[Alexandria](https://docs.firecrawl.dev/features/alexandria) is a catalogue of data providers you call through Firecrawl: company records, filings, economic series, jobs, places and more. Discovery is free; running a tool costs its listed price in credits. The CLI follows discover, inspect, execute:
+
+```bash
+# 1. discover (free): ranked tools for a task
+firecrawl search "company firmographics by domain" --sources alexandria
+
+# 2. inspect (free): price, required inputs, response fields
+firecrawl find-tools --providers apollo --capabilities companies/enrich
+
+# 3. execute (paid): must name a budget
+firecrawl scrape --provider apollo --capability companies/enrich \
+  --options '{"domain":"firecrawl.dev"}' --max-credits 30
+```
+
+`scrape --provider` always looks the contract up first, for free, and sends nothing to the paid path when:
+
+- the catalogue does not return that exact provider and capability,
+- the contract has no readable price,
+- a required input or a "one of these" input group is missing,
+- the call costs anything and no `--max-credits` was given, or the worst case is over it,
+- the tool bills per record and nothing bounds the record count. Set the limit option its contract declares (clamped to the contract's max), or state your own bound with `--assume-records <n>`.
+
+A non-2xx upstream status or an empty result is reported as an error, with the credits it cost. A charge above the plan or the cap still prints the data, and exits 3. Pinning a workflow `version` is not supported, because the catalogue only prices the latest version.
+
+The price and the cap go to stderr before the call. The result ends with `credits used: N`, taken from what Firecrawl actually billed, and a warning prints if that is more than planned. Provider-terms errors (`THIRD_PARTY_DATA_TERMS_REQUIRED`) print the URL where an org admin accepts the terms.
 
 ### Output
 

@@ -63,6 +63,7 @@ export interface SearchResponse {
     web?: SearchResult[];
     news?: SearchResult[];
     images?: SearchResult[];
+    tools?: SearchTool[];
     [key: string]: unknown;
   };
   creditsUsed?: number;
@@ -95,4 +96,89 @@ export interface CreditUsageResponse {
     billingPeriodEnd?: string;
     [key: string]: unknown;
   };
+}
+
+// ---- Alexandria (catalogued data providers via /v2/search + /v2/scrape) ----
+// Shapes captured from live probes 2026-09-29 and the official SDK
+// (@mendable/firecrawl-js 4.42.0 scrapeAlexandria/findTools).
+
+/** One capability invocation: the body element of `alexandria: [...]`. */
+export interface AlexandriaCall {
+  provider: string;
+  capability: string;
+  version?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface AlexandriaItemError {
+  code?: string;
+  message?: string;
+  status?: number;
+  requiresAction?: { url?: string; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/** One per-capability result inside `data.alexandria`. */
+export interface AlexandriaResult {
+  provider: string;
+  capability: string;
+  creditsCost?: number;
+  data?: unknown;
+  records?: unknown;
+  error?: AlexandriaItemError;
+  alexandriaId?: string;
+  [key: string]: unknown;
+}
+
+export interface AlexandriaResponse {
+  success: boolean;
+  scrape_id?: string;
+  data: {
+    alexandria: AlexandriaResult[];
+    creditsCost: number;
+  };
+}
+
+export interface ContractOption {
+  name: string;
+  type?: string;
+  about?: string;
+  required?: boolean;
+  min?: number;
+  max?: number;
+  [key: string]: unknown;
+}
+
+/** One catalogue entry returned by find-tools (level: categories|providers|groups|tools). */
+export interface CatalogueItem {
+  id?: string;
+  provider?: string;
+  capability?: string;
+  name?: string;
+  description?: string;
+  creditsCost?: number;
+  perRecord?: boolean;
+  requiresOneOf?: string[][];
+  options?: ContractOption[];
+  response?: { about?: string; key?: string; fields?: ContractOption[]; [key: string]: unknown };
+  execute?: AlexandriaCall;
+  next?: AlexandriaCall | null;
+  [key: string]: unknown;
+}
+
+export interface FindToolsData {
+  level?: string;
+  items: CatalogueItem[];
+  total?: number;
+  next?: AlexandriaCall | null;
+  suggestion?: string;
+  [key: string]: unknown;
+}
+
+/** A ranked tool inside /v2/search `data.tools` when sources includes alexandria. */
+export interface SearchTool {
+  provider: string;
+  capability: string;
+  description?: string;
+  [key: string]: unknown;
 }

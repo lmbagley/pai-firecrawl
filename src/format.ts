@@ -8,7 +8,13 @@ import type {
   SearchResponse,
   CreditUsageResponse,
   ScrapeMetadata,
+  CatalogueItem,
+  ContractOption,
+  FindToolsData,
+  SearchTool,
+  AlexandriaResult,
 } from "./types.ts";
+import { credits } from "./alexandria.ts";
 
 export function jsonOut(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -82,6 +88,8 @@ export function formatSearch(resp: SearchResponse): string {
   render("Web", resp.data.web);
   render("News", resp.data.news);
   render("Images", resp.data.images);
+  const tools = formatSearchTools(resp.data.tools);
+  if (tools) sections.push(tools);
   const body = sections.length ? sections.join("\n\n") : "(no results)";
   return body + creditFooter(resp.creditsUsed);
 }
@@ -105,4 +113,74 @@ export function formatUsage(resp: CreditUsageResponse): string {
     lines.push(`Billing window:    ${d.billingPeriodStart ?? "?"} → ${d.billingPeriodEnd ?? "?"}`);
   }
   return lines.join("\n");
+}
+
+// ---- Alexandria ------------------------------------------------------------
+
+function price(item: CatalogueItem): string {
+  if (typeof item.creditsCost !== "number") return "price not listed";
+  return item.perRecord ? `${credits(item.creditsCost)} per record` : credits(item.creditsCost);
+}
+
+function renderFields(label: string, fields: ContractOption[] | undefined): string[] {
+  if (!fields || !fields.length) return [];
+  return [
+    `   ${label}:`,
+    ...fields.map((f) => `     - ${f.name}${f.type ? ` (${f.type})` : ""}${f.required ? " required" : ""}${f.about ? `: ${f.about}` : ""}`),
+  ];
+}
+
+/** Render one page of the Alexandria catalogue (categories, providers, tools, or a contract). */
+export function formatFindTools(data: FindToolsData, creditsCost: number): string {
+  const lines: string[] = [];
+  const items = data.items ?? [];
+  if (!items.length) {
+    lines.push(`(no matching tools${data.suggestion ? ` — ${data.suggestion}` : ""})`);
+  }
+  items.forEach((it, i) => {
+    if (it.provider && it.capability) {
+      lines.push(`${i + 1}. ${it.provider}/${it.capability}${it.name ? ` — ${it.name}` : ""}  [${price(it)}]`);
+    } else {
+      lines.push(`${i + 1}. ${it.id ?? "(unnamed)"}`);
+    }
+    if (it.description) lines.push(`   ${it.description}`);
+    if (it.requiresOneOf?.length) {
+      lines.push(`   needs one of: ${it.requiresOneOf.map((g) => `[${g.join(" | ")}]`).join(", ")}`);
+    }
+    lines.push(...renderFields("options", it.options));
+    if (it.response) {
+      if (it.response.about) lines.push(`   returns: ${it.response.about}`);
+      if (it.response.key) lines.push(`   response key: ${it.response.key}`);
+      lines.push(...renderFields("fields", it.response.fields));
+    }
+  });
+  const shown = items.length;
+  const header = `Alexandria catalogue — level: ${data.level ?? "?"}${typeof data.total === "number" ? `, ${shown} of ${data.total}` : ""}`;
+  const nextOffset = data.next?.options && typeof data.next.options.offset === "number" ? data.next.options.offset : undefined;
+  const more = data.next ? `\n\nmore: repeat with --offset ${nextOffset ?? "(see --json next)"}` : "";
+  return `${header}\n\n${lines.join("\n")}${more}${creditFooter(creditsCost)}`;
+}
+
+/** Render the tools block of an Alexandria-enabled search. */
+export function formatSearchTools(tools: SearchTool[] | undefined): string {
+  if (!tools || !tools.length) return "";
+  const lines = tools.map(
+    (t, i) => `${i + 1}. ${t.provider}/${t.capability}${t.description ? `\n   ${t.description}` : ""}`,
+  );
+  return (
+    `## Alexandria tools\n${lines.join("\n")}\n\n` +
+    `   Check the price and inputs before running: firecrawl find-tools --providers <p> --capabilities <c>`
+  );
+}
+
+/**
+ * Render one executed Alexandria capability. Live shape (2026-09-29): the rows
+ * are in `data`; `records` is the billed record COUNT, not the rows.
+ */
+export function formatAlexandriaResult(item: AlexandriaResult, creditsCost: number): string {
+  const meta: string[] = [];
+  if (typeof item.records === "number") meta.push(`records: ${item.records}`);
+  if (item.upstreamStatus !== undefined) meta.push(`upstream status: ${String(item.upstreamStatus)}`);
+  const head = `# ${item.provider}/${item.capability}${meta.length ? `\n${meta.join(" · ")}` : ""}`;
+  return `${head}\n\n${jsonOut(item.data ?? null)}${creditFooter(creditsCost)}`;
 }
